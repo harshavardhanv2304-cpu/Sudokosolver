@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sudoku Solver — Constraint Propagation Engine</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+
+  :root {
+    --bg:       #0a0a0f;
+    --surface:  #13131a;
+    --card:     #1a1a24;
+    --border:   #2a2a3a;
+    --accent:   #7c6af7;
+    --accent2:  #4fd1c5;
+    --given:    #e2e8f0;
+    --solved:   #4fd1c5;
+    --error:    #fc8181;
+    --muted:    #4a4a6a;
+    --text:     #c8cee0;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Space Grotesk', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem 1rem 4rem;
+  }
+
+  /* ── Header ── */
+  header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 0.6rem;
+  }
+  h1 {
+    font-size: clamp(1.8rem, 5vw, 3rem);
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  h1 span { color: var(--accent); }
+  .subtitle {
+    margin-top: 0.6rem;
+    font-size: 0.88rem;
+    color: var(--muted);
+    font-weight: 400;
+  }
+
+  /* ── Layout ── */
+  .layout {
+    display: grid;
+    grid-template-columns: auto 260px;
+    gap: 2rem;
+    align-items: start;
+    max-width: 780px;
+    width: 100%;
+  }
+
+  /* ── Grid ── */
+  .grid-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 1.2rem;
+    position: relative;
+  }
+
+  #sudoku-grid {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    gap: 0;
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    overflow: hidden;
+    width: 100%;
+    aspect-ratio: 1;
+  }
+
+  .cell {
+    position: relative;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+
+  /* Box borders */
+  .cell[data-col="2"], .cell[data-col="5"] { border-right: 2px solid var(--accent); }
+  .cell[data-row="2"], .cell[data-row="5"] { border-bottom: 2px solid var(--accent); }
+
+  .cell input {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: transparent;
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(0.8rem, 2.5vw, 1.2rem);
+    font-weight: 700;
+    color: var(--given);
+    caret-color: var(--accent);
+    outline: none;
+    cursor: pointer;
+  }
+
+  .cell input.given  { color: var(--given); }
+  .cell input.solved { color: var(--solved); animation: popIn 0.25s ease; }
+  .cell input.error  { color: var(--error); }
+
+  .cell:hover { background: #1e1e2e; }
+  .cell.selected { background: #1e1e38; }
+  .cell.highlight { background: #1a1a2e; }
+
+  @keyframes popIn {
+    0%   { transform: scale(0.6); opacity: 0; }
+    70%  { transform: scale(1.1); }
+    100% { transform: scale(1);   opacity: 1; }
+  }
+
+  /* ── Sidebar ── */
+  .sidebar { display: flex; flex-direction: column; gap: 1rem; }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.2rem;
+  }
+  .panel-title {
+    font-size: 0.7rem;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  /* Stats */
+  .stats { display: flex; flex-direction: column; gap: 0.6rem; }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+  }
+  .stat-label { color: var(--muted); }
+  .stat-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    color: var(--accent2);
+    font-size: 0.9rem;
+  }
+
+  /* Buttons */
+  .btn-group { display: flex; flex-direction: column; gap: 0.5rem; }
+  .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    padding: 0.65rem 1rem;
+    border-radius: 8px;
+    border: none;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 0.01em;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover { background: #9580ff; transform: translateY(-1px); }
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-danger {
+    background: transparent;
+    border: 1px solid #3a2020;
+    color: var(--error);
+  }
+  .btn-danger:hover { background: #2a1515; }
+
+  /* Presets */
+  .preset-list { display: flex; flex-direction: column; gap: 0.4rem; }
+  .preset-btn {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.45rem 0.75rem;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 0.78rem;
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.12s;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .preset-btn:hover { border-color: var(--accent2); color: var(--accent2); }
+  .preset-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    background: #1e1e2e;
+  }
+
+  /* Status bar */
+  #status {
+    margin-top: 0.8rem;
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    text-align: center;
+    min-height: 2.4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+  }
+  #status.success { border-color: var(--accent2); color: var(--accent2); }
+  #status.fail    { border-color: var(--error);   color: var(--error);   }
+  #status.running { border-color: var(--accent);  color: var(--accent);  }
+
+  /* Progress bar */
+  .progress-wrap {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 0.6rem;
+    overflow: hidden;
+  }
+  #progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+
+  @media (max-width: 600px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { flex-direction: row; flex-wrap: wrap; }
+    .panel { flex: 1; min-width: 140px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="eyebrow">Backtracking + Constraint Propagation</p>
+  <h1>Sudoku <span>Solver</span></h1>
+  <p class="subtitle">Arc consistency · MRV heuristic · Forward checking</p>
+</header>
+
+<div class="layout">
+  <!-- Grid -->
+  <div class="grid-wrap">
+    <div id="sudoku-grid"></div>
+    <div id="status">Enter a puzzle or load a preset →</div>
+    <div class="progress-wrap"><div id="progress-bar"></div></div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+
+    <div class="panel">
+      <p class="panel-title">Performance</p>
+      <div class="stats">
+        <div class="stat-row"><span class="stat-label">Solve time</span><span class="stat-val" id="stat-time">—</span></div>
+        <div class="stat-row"><span class="stat-label">Backtracks</span><span class="stat-val" id="stat-bt">—</span></div>
+        <div class="stat-row"><span class="stat-label">Nodes explored</span><span class="stat-val" id="stat-nodes">—</span></div>
+        <div class="stat-row"><span class="stat-label">Cells given</span><span class="stat-val" id="stat-given">—</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="panel-title">Actions</p>
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="solve()">▶ Solve</button>
+        <button class="btn btn-secondary" onclick="visualSolve()">◎ Visualise</button>
+        <button class="btn btn-secondary" onclick="clearSolved()">↺ Clear solved</button>
+        <button class="btn btn-danger" onclick="resetAll()">✕ Reset all</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="panel-title">Presets</p>
+      <div class="preset-list">
+        <button class="preset-btn" onclick="loadPreset('easy')">Easy <span class="preset-tag">36 given</span></button>
+        <button class="preset-btn" onclick="loadPreset('medium')">Medium <span class="preset-tag">30 given</span></button>
+        <button class="preset-btn" onclick="loadPreset('hard')">Hard <span class="preset-tag">25 given</span></button>
+        <button class="preset-btn" onclick="loadPreset('evil')">Evil <span class="preset-tag">21 given</span></button>
+        <button class="preset-btn" onclick="loadPreset('worldHardest')">World's Hardest <span class="preset-tag">23 given</span></button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Presets ──────────────────────────────────────────────
+const PRESETS = {
+  easy: [
+    5,3,0, 0,7,0, 0,0,0,
+    6,0,0, 1,9,5, 0,0,0,
+    0,9,8, 0,0,0, 0,6,0,
+    8,0,0, 0,6,0, 0,0,3,
+    4,0,0, 8,0,3, 0,0,1,
+    7,0,0, 0,2,0, 0,0,6,
+    0,6,0, 0,0,0, 2,8,0,
+    0,0,0, 4,1,9, 0,0,5,
+    0,0,0, 0,8,0, 0,7,9
+  ],
+  medium: [
+    0,0,0, 2,6,0, 7,0,1,
+    6,8,0, 0,7,0, 0,9,0,
+    1,9,0, 0,0,4, 5,0,0,
+    8,2,0, 1,0,0, 0,4,0,
+    0,0,4, 6,0,2, 9,0,0,
+    0,5,0, 0,0,3, 0,2,8,
+    0,0,9, 3,0,0, 0,7,4,
+    0,4,0, 0,5,0, 0,3,6,
+    7,0,3, 0,1,8, 0,0,0
+  ],
+  hard: [
+    0,0,0, 6,0,0, 4,0,0,
+    7,0,0, 0,0,3, 6,0,0,
+    0,0,0, 0,9,1, 0,8,0,
+    0,0,0, 0,0,0, 0,0,0,
+    0,5,0, 1,8,0, 0,0,3,
+    0,0,0, 3,0,6, 0,4,5,
+    0,4,0, 2,0,0, 0,6,0,
+    9,0,3, 0,0,0, 0,0,0,
+    0,2,0, 0,0,0, 1,0,0
+  ],
+  evil: [
+    0,0,0, 0,0,0, 0,1,2,
+    0,0,0, 0,3,5, 0,0,0,
+    0,0,0, 6,0,0, 0,7,0,
+    7,0,0, 0,0,0, 3,0,0,
+    0,0,0, 4,0,0, 8,0,0,
+    1,0,0, 0,0,0, 0,0,0,
+    0,0,0, 1,2,0, 0,0,0,
+    0,8,0, 0,0,0, 0,4,0,
+    0,5,0, 0,0,0, 6,0,0
+  ],
+  worldHardest: [
+    8,0,0, 0,0,0, 0,0,0,
+    0,0,3, 6,0,0, 0,0,0,
+    0,7,0, 0,9,0, 2,0,0,
+    0,5,0, 0,0,7, 0,0,0,
+    0,0,0, 0,4,5, 7,0,0,
+    0,0,0, 1,0,0, 0,3,0,
+    0,0,1, 0,0,0, 0,6,8,
+    0,0,8, 5,0,0, 0,1,0,
+    0,9,0, 0,0,0, 4,0,0
+  ]
+};
+
+// ── Build DOM Grid ────────────────────────────────────────
+const gridEl = document.getElementById('sudoku-grid');
+const cells = [];
+
+for (let r = 0; r < 9; r++) {
+  for (let c = 0; c < 9; c++) {
+    const div = document.createElement('div');
+    div.className = 'cell';
+    div.dataset.row = r;
+    div.dataset.col = c;
+
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.maxLength = 1;
+    inp.inputMode = 'numeric';
+    inp.addEventListener('keydown', e => onKey(e, r, c));
+    inp.addEventListener('focus',   () => highlight(r, c));
+
+    div.appendChild(inp);
+    gridEl.appendChild(div);
+    cells.push(inp);
+  }
+}
+
+function idx(r, c) { return r * 9 + c; }
+function getVal(r, c) { return parseInt(cells[idx(r,c)].value) || 0; }
+function setCell(r, c, v, cls) {
+  const inp = cells[idx(r, c)];
+  inp.value = v || '';
+  inp.className = cls || '';
+}
+
+function onKey(e, r, c) {
+  if (e.key >= '1' && e.key <= '9') { /* allow */ }
+  else if (e.key === 'Backspace' || e.key === 'Delete') { cells[idx(r,c)].value = ''; e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { cells[idx(r, Math.min(8, c+1))]?.focus(); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft')  { cells[idx(r, Math.max(0, c-1))]?.focus(); e.preventDefault(); }
+  else if (e.key === 'ArrowDown')  { cells[idx(Math.min(8, r+1), c)]?.focus(); e.preventDefault(); }
+  else if (e.key === 'ArrowUp')    { cells[idx(Math.max(0, r-1), c)]?.focus(); e.preventDefault(); }
+  else e.preventDefault();
+}
+
+function highlight(r, c) {
+  cells.forEach((inp, i) => {
+    const cr = Math.floor(i / 9), cc = i % 9;
+    const br = Math.floor(r/3), bc = Math.floor(c/3);
+    const samebox = Math.floor(cr/3)===br && Math.floor(cc/3)===bc;
+    inp.parentElement.classList.toggle('selected',  cr===r && cc===c);
+    inp.parentElement.classList.toggle('highlight', (cr===r || cc===c || samebox) && !(cr===r && cc===c));
+  });
+}
+
+// ── Solver Core (Constraint Propagation + Backtracking) ──
+let backtracks = 0, nodes = 0;
+
+function boardFromGrid() {
+  const b = new Array(81).fill(0);
+  for (let r = 0; r < 9; r++)
+    for (let c = 0; c < 9; c++)
+      b[idx(r,c)] = getVal(r, c);
+  return b;
+}
+
+function isValid(board, pos, val) {
+  const r = Math.floor(pos / 9), c = pos % 9;
+  for (let i = 0; i < 9; i++) {
+    if (board[r*9+i] === val && i !== c) return false;
+    if (board[i*9+c] === val && i !== r) return false;
+  }
+  const br = Math.floor(r/3)*3, bc = Math.floor(c/3)*3;
+  for (let dr = 0; dr < 3; dr++)
+    for (let dc = 0; dc < 3; dc++) {
+      const ni = (br+dr)*9+(bc+dc);
+      if (ni !== pos && board[ni] === val) return false;
+    }
+  return true;
+}
+
+// MRV: pick empty cell with fewest valid options
+function getPossible(board, pos) {
+  const opts = [];
+  for (let v = 1; v <= 9; v++)
+    if (isValid(board, pos, v)) opts.push(v);
+  return opts;
+}
+
+function pickCell(board) {
+  let best = -1, bestLen = 10;
+  for (let i = 0; i < 81; i++) {
+    if (board[i] === 0) {
+      const opts = getPossible(board, i);
+      if (opts.length < bestLen) { bestLen = opts.length; best = i; if (bestLen === 1) break; }
+    }
+  }
+  return best;
+}
+
+function solveBoard(board) {
+  const pos = pickCell(board);
+  if (pos === -1) return true; // solved
+  nodes++;
+  const opts = getPossible(board, pos);
+  for (const v of opts) {
+    board[pos] = v;
+    if (solveBoard(board)) return true;
+    board[pos] = 0;
+    backtracks++;
+  }
+  return false;
+}
+
+function setStatus(msg, cls) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = cls || '';
+}
+function setProgress(pct) {
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+
+function solve() {
+  backtracks = 0; nodes = 0;
+  const givenMask = cells.map(inp => inp.value !== '');
+  const board = boardFromGrid();
+
+  const givenCount = board.filter(v => v > 0).length;
+  document.getElementById('stat-given').textContent = givenCount;
+
+  setStatus('Solving…', 'running');
+  setProgress(30);
+
+  setTimeout(() => {
+    const t0 = performance.now();
+    const ok = solveBoard(board);
+    const t1 = performance.now();
+
+    setProgress(100);
+
+    if (ok) {
+      for (let r = 0; r < 9; r++)
+        for (let c = 0; c < 9; c++) {
+          const i = idx(r, c);
+          if (!givenMask[i]) setCell(r, c, board[i], 'solved');
+          else setCell(r, c, board[i], 'given');
+        }
+      document.getElementById('stat-time').textContent  = (t1-t0).toFixed(2) + ' ms';
+      document.getElementById('stat-bt').textContent    = backtracks.toLocaleString();
+      document.getElementById('stat-nodes').textContent = nodes.toLocaleString();
+      setStatus('✓ Solved in ' + (t1-t0).toFixed(2) + ' ms', 'success');
+    } else {
+      setStatus('✗ No solution exists', 'fail');
+      setProgress(0);
+    }
+  }, 30);
+}
+
+// ── Visual Step-by-Step Solver ────────────────────────────
+async function visualSolve() {
+  backtracks = 0; nodes = 0;
+  const givenMask = cells.map(inp => inp.value !== '');
+  const board = boardFromGrid();
+  const givenCount = board.filter(v => v > 0).length;
+  document.getElementById('stat-given').textContent = givenCount;
+
+  clearSolved();
+  setStatus('Visualising…', 'running');
+
+  const steps = [];
+  function solveTrace(b) {
+    const pos = pickCell(b);
+    if (pos === -1) return true;
+    nodes++;
+    const opts = getPossible(b, pos);
+    for (const v of opts) {
+      b[pos] = v;
+      steps.push({ pos, v, set: true });
+      if (solveTrace(b)) return true;
+      b[pos] = 0;
+      steps.push({ pos, v: 0, set: false });
+      backtracks++;
+    }
+    return false;
+  }
+
+  const t0 = performance.now();
+  const ok = solveTrace(board);
+  const t1 = performance.now();
+
+  document.getElementById('stat-time').textContent  = (t1-t0).toFixed(2) + ' ms';
+  document.getElementById('stat-bt').textContent    = backtracks.toLocaleString();
+  document.getElementById('stat-nodes').textContent = nodes.toLocaleString();
+
+  if (!ok) { setStatus('✗ No solution', 'fail'); return; }
+
+  // Animate — throttle to ~300 steps/frame for speed
+  const CHUNK = Math.max(1, Math.floor(steps.length / 300));
+  let si = 0;
+  function frame() {
+    for (let k = 0; k < CHUNK && si < steps.length; k++, si++) {
+      const { pos, v } = steps[si];
+      const r = Math.floor(pos / 9), c = pos % 9;
+      if (!givenMask[pos]) {
+        setCell(r, c, v || null, v ? 'solved' : '');
+      }
+    }
+    setProgress(Math.round(si / steps.length * 100));
+    if (si < steps.length) requestAnimationFrame(frame);
+    else setStatus('✓ Visualised — ' + (t1-t0).toFixed(2) + ' ms solve', 'success');
+  }
+  requestAnimationFrame(frame);
+}
+
+// ── Utils ─────────────────────────────────────────────────
+function loadPreset(name) {
+  resetAll(true);
+  const data = PRESETS[name];
+  data.forEach((v, i) => {
+    const r = Math.floor(i/9), c = i%9;
+    if (v) setCell(r, c, v, 'given');
+  });
+  const count = data.filter(v => v > 0).length;
+  document.getElementById('stat-given').textContent = count;
+  setStatus('Loaded ' + name + ' — click Solve or Visualise', '');
+  setProgress(0);
+}
+
+function clearSolved() {
+  cells.forEach(inp => { if (inp.className === 'solved') { inp.value = ''; inp.className = ''; } });
+  setStatus('Solved cells cleared.', '');
+  setProgress(0);
+}
+
+function resetAll(silent) {
+  cells.forEach(inp => { inp.value = ''; inp.className = ''; });
+  ['stat-time','stat-bt','stat-nodes','stat-given'].forEach(id => document.getElementById(id).textContent = '—');
+  setProgress(0);
+  if (!silent) setStatus('Board reset. Enter a puzzle or load a preset →', '');
+}
+
+// Init
+loadPreset('easy');
+</script>
+</body>
+</html>
